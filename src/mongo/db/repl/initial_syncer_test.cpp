@@ -236,6 +236,8 @@ protected:
         bool droppedUserDBs = false;
         std::vector<std::string> droppedCollections;
         int documentsInsertedCount = 0;
+        bool uniqueIndexUpdated = false;
+        bool upgradeUniqueIndexVersionNonReplicatedShouldFail = false;
     };
 
     stdx::mutex _storageInterfaceWorkDoneMutex;  // protects _storageInterfaceWorkDone.
@@ -248,6 +250,8 @@ protected:
                                                   const NamespaceString& nss) {
             LockGuard lock(_storageInterfaceWorkDoneMutex);
             _storageInterfaceWorkDone.createOplogCalled = true;
+            _storageInterfaceWorkDone.uniqueIndexUpdated = false;
+            _storageInterfaceWorkDone.upgradeUniqueIndexVersionNonReplicatedShouldFail = false;
             return Status::OK();
         };
         _storageInterface->truncateCollFn = [this](OperationContext* opCtx,
@@ -300,6 +304,20 @@ protected:
                 return StatusWith<std::unique_ptr<CollectionBulkLoader>>(
                     std::unique_ptr<CollectionBulkLoader>(collInfo->loader));
             };
+        _storageInterface->upgradeUniqueIndexVersionNonReplicatedFn = [this](
+            OperationContext* opCtx) {
+            LockGuard lock(_storageInterfaceWorkDoneMutex);
+            if (_storageInterfaceWorkDone.upgradeUniqueIndexVersionNonReplicatedShouldFail) {
+                // One of the status codes a failed upgradeUniqueIndexVersionNonReplicated call
+                // can return is NamespaceNotFound.
+                return Status(ErrorCodes::NamespaceNotFound,
+                              "upgradeUniqueIndexVersionNonReplicated failed because the desired "
+                              "ns was not found.");
+            } else {
+                _storageInterfaceWorkDone.uniqueIndexUpdated = true;
+                return Status::OK();
+            }
+        };
 
         _dbWorkThreadPool = stdx::make_unique<ThreadPool>(ThreadPool::Options());
         _dbWorkThreadPool->startup();
@@ -3458,6 +3476,10 @@ void InitialSyncerTest::doSuccessfulInitialSyncWithOneBatch() {
 TEST_F(InitialSyncerTest,
        InitialSyncerReturnsLastAppliedOnReachingStopTimestampAfterApplyingOneBatch) {
     doSuccessfulInitialSyncWithOneBatch();
+
+    // Ensure that upgradeUniqueIndexVersionNonReplicated is not called.
+    LockGuard lock(_storageInterfaceWorkDoneMutex);
+    ASSERT_FALSE(_storageInterfaceWorkDone.uniqueIndexUpdated);
 }
 
 TEST_F(InitialSyncerTest,

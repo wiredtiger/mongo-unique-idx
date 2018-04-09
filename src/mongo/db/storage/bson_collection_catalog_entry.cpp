@@ -29,6 +29,7 @@
  */
 
 #include "mongo/db/storage/bson_collection_catalog_entry.h"
+#include "mongo/db/index/index_descriptor.h"
 
 #include <algorithm>
 #include <numeric>
@@ -151,6 +152,18 @@ void BSONCollectionCatalogEntry::getReadyIndexes(OperationContext* opCtx,
     for (unsigned i = 0; i < md.indexes.size(); i++) {
         if (md.indexes[i].ready)
             names->push_back(md.indexes[i].spec["name"].String());
+    }
+}
+
+void BSONCollectionCatalogEntry::getAllUniqueIndexes(OperationContext* opCtx,
+                                                     std::vector<std::string>* names) const {
+    MetaData md = _getMetaData(opCtx);
+
+    for (unsigned i = 0; i < md.indexes.size(); i++) {
+        if (md.indexes[i].spec["unique"]) {
+            std::string indexName = md.indexes[i].spec["name"].String();
+            names->push_back(indexName);
+        }
     }
 }
 

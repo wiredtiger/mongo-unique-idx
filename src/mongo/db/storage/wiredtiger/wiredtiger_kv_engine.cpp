@@ -832,10 +832,26 @@ SortedDataInterface* WiredTigerKVEngine::getGroupedSortedDataInterface(Operation
                                                                        const IndexDescriptor* desc,
                                                                        KVPrefix prefix) {
     if (desc->unique()) {
-        // MongoDB 4.0 onwards new index version `kV2Unique` would be supported. By default unique
-        // index would be created with index version `kV2`. New format unique index would be created
-        // only if `IndexVersion` is `kV2Unique` and for non _id indexes.
-        if (desc->version() == IndexDescriptor::IndexVersion::kV2Unique && !desc->isIdIndex())
+        // MongoDB 4.0 onwards unique indexes have a new data foramt. _id indexes continue to remain
+        // in old format.
+        auto version = WiredTigerUtil::checkApplicationMetadataFormatVersion(
+            opCtx,
+            _uri(ident),
+            WiredTigerIndex::kMinimumIndexVersion,
+            WiredTigerIndex::kMaximumIndexVersion);
+
+        bool upgradingOrUpgraded =
+            (serverGlobalParams.featureCompatibility.getVersionUnsafe() ==
+                 ServerGlobalParams::FeatureCompatibility::Version::kUpgradingTo40 ||
+             serverGlobalParams.featureCompatibility.getVersionUnsafe() ==
+                 ServerGlobalParams::FeatureCompatibility::Version::kFullyUpgradedTo40);
+
+        // Create new format unique index when fCV is upgrading or upgraded. On mongod startup the
+        // existing indexes are created before initializing fCV. So, use the index format version
+        // present in index's app metadata do determine if new format index should be created.
+        if (!desc->isIdIndex() &&
+            (upgradingOrUpgraded ||
+             version.getValue() >= WiredTigerIndex::kDataFormatV3KeyStringV0UniqueIndexV1Version))
             return new WiredTigerIndexUniqueV2(opCtx, _uri(ident), desc, prefix, _readOnly);
         else
             return new WiredTigerIndexUnique(opCtx, _uri(ident), desc, prefix, _readOnly);

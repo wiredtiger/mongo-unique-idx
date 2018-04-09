@@ -125,6 +125,8 @@ public:
     using IsAdminDbValidFn = stdx::function<Status(OperationContext* opCtx)>;
     using GetCollectionUUIDFn = stdx::function<StatusWith<OptionalCollectionUUID>(
         OperationContext* opCtx, const NamespaceString& nss)>;
+    using UpgradeUniqueIndexVersionNonReplicatedFn =
+        stdx::function<Status(OperationContext* opCtx)>;
 
     StorageInterfaceMock() = default;
 
@@ -283,6 +285,9 @@ public:
         return getCollectionUUIDFn(opCtx, nss);
     }
 
+    Status upgradeUniqueIndexVersionNonReplicated(OperationContext* opCtx) override {
+        return upgradeUniqueIndexVersionNonReplicatedFn(opCtx);
+    }
     void setStableTimestamp(ServiceContext* serviceCtx, Timestamp snapshotName) override;
 
     void setInitialDataTimestamp(ServiceContext* serviceCtx, Timestamp snapshotName) override;
@@ -377,6 +382,11 @@ public:
     GetCollectionUUIDFn getCollectionUUIDFn = [](
         OperationContext* opCtx, const NamespaceString& nss) -> StatusWith<OptionalCollectionUUID> {
         return Status{ErrorCodes::IllegalOperation, "GetCollectionUUIDFn not implemented."};
+    };
+    UpgradeUniqueIndexVersionNonReplicatedFn upgradeUniqueIndexVersionNonReplicatedFn =
+        [](OperationContext* opCtx) -> Status {
+        return Status{ErrorCodes::IllegalOperation,
+                      "UpgradeUniqueIndexVersionNonReplicatedFn not implemented."};
     };
 
 private:

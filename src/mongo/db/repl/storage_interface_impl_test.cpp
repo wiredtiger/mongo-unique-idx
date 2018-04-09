@@ -2558,6 +2558,33 @@ TEST_F(StorageInterfaceImplTest, GetCollectionCountReturnsCollectionCount) {
     ASSERT_EQUALS(3UL, count);
 }
 
+TEST_F(StorageInterfaceImplTest, UpgradeUniqueIndexVersionNonReplicatedUpgradesLocalIndex) {
+    auto opCtx = getOperationContext();
+    StorageInterfaceImpl storage;
+    auto nss = makeNamespace(_agent);
+
+    ASSERT_OK(storage.createCollection(opCtx, nss, CollectionOptions()));
+    auto indexSpec =
+        BSON("v" << static_cast<int>(kIndexVersion) << "key" << BSON("x" << 1) << "name"
+                 << "x_1"
+                 << "ns"
+                 << nss.ns()
+                 << "unique"
+                 << true);
+    ASSERT_EQUALS(createIndexForColl(opCtx, nss, indexSpec), 2);
+    ASSERT_OK(storage.upgradeUniqueIndexVersionNonReplicated(opCtx));
+
+    Lock::DBLock dbLock(opCtx, nss.db(), MODE_X);
+    AutoGetCollection autoColl(opCtx, nss, MODE_X);
+    auto coll = autoColl.getCollection();
+    auto indexCatalog = coll->getIndexCatalog();
+    const IndexDescriptor* desc = indexCatalog->findIndexByName(opCtx, "x_1");
+
+    // This shoould change.
+    ASSERT_EQUALS(static_cast<int>(IndexDescriptor::IndexVersion::kV2),
+                  desc->infoObj()["v"].numberLong());
+}
+
 TEST_F(StorageInterfaceImplTest,
        SetCollectionCountReturnsNamespaceNotFoundWhenDatabaseDoesNotExist) {
     auto opCtx = getOperationContext();

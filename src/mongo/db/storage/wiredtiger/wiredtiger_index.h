@@ -54,6 +54,13 @@ public:
     static StatusWith<std::string> parseIndexOptions(const BSONObj& options);
 
     /**
+     * Creates the "app_metadata" string for the index from the index descriptor, to be stored
+     * in WiredTiger's metadata. The output string is of the form:
+     * ",app_metadata=(...)," and can be appended to the config strings for WiredTiger's API calls.
+     */
+    static std::string generateAppMetadataString(const IndexDescriptor& desc);
+
+    /**
      * Creates a configuration string suitable for 'config' parameter in WT_SESSION::create().
      * Configuration string is constructed from:
      *     built-in defaults
@@ -76,6 +83,14 @@ public:
      * 'config' should be created with generateCreateString().
      */
     static int Create(OperationContext* opCtx, const std::string& uri, const std::string& config);
+
+    // Keystring format 7 was used in 3.3.6 - 3.3.8 development releases.
+    static const int kDataFormatV1KeyStringV0IndexVersion;
+    static const int kDataFormatV2KeyStringV1IndexVersion;
+    static const int kDataFormatV3KeyStringV0UniqueIndexV1Version;
+    static const int kDataFormatV4KeyStringV1UniqueIndexV2Version;
+    static const int kMinimumIndexVersion;
+    static const int kMaximumIndexVersion;
 
     WiredTigerIndex(OperationContext* ctx,
                     const std::string& uri,

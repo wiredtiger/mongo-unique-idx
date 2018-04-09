@@ -300,6 +300,7 @@ Status _collModInternal(OperationContext* opCtx,
                         const NamespaceString& nss,
                         const BSONObj& cmdObj,
                         BSONObjBuilder* result,
+                        bool upgradeUniqueIndexVersion,
                         OptionalCollectionUUID uuid) {
     StringData dbName = nss.db();
     AutoGetDb autoDb(opCtx, dbName, MODE_X);
@@ -424,6 +425,25 @@ Status _collModInternal(OperationContext* opCtx,
     if (!cmr.noPadding.eoo())
         setCollectionOptionFlag(opCtx, coll, cmr.noPadding, result);
 
+    // Upgrade unique indexes
+    if (upgradeUniqueIndexVersion) {
+        std::vector<std::string> indexNames;
+        coll->getCatalogEntry()->getAllUniqueIndexes(opCtx, &indexNames);
+
+        for (size_t i = 0; i < indexNames.size(); i++) {
+            const IndexDescriptor* desc =
+                coll->getIndexCatalog()->findIndexByName(opCtx, indexNames[i]);
+            invariant(desc);
+
+            // Refresh the in-memory instance of the index with new version. This will also update
+            // the index formatVersion on-disk indirectly.
+            desc = coll->getIndexCatalog()->refreshEntry(opCtx, desc);
+
+            opCtx->recoveryUnit()->onRollback(
+                [opCtx, desc, coll]() { coll->getIndexCatalog()->refreshEntry(opCtx, desc); });
+        }
+    }
+
     // Add collection UUID if it is missing. This returns an error if a collection already has a
     // different UUID. As we don't assign UUIDs to system.indexes (SERVER-29926), don't implicitly
     // upgrade them on collMod either.
@@ -512,7 +532,12 @@ Status collMod(OperationContext* opCtx,
                const NamespaceString& nss,
                const BSONObj& cmdObj,
                BSONObjBuilder* result) {
-    return _collModInternal(opCtx, nss, cmdObj, result, /*UUID*/ boost::none);
+    return _collModInternal(opCtx,
+                            nss,
+                            cmdObj,
+                            result,
+                            /*updateUniqueIndexVersion*/ false,
+                            /*UUID*/ boost::none);
 }
 
 Status collModForUUIDUpgrade(OperationContext* opCtx,
@@ -520,7 +545,37 @@ Status collModForUUIDUpgrade(OperationContext* opCtx,
                              const BSONObj& cmdObj,
                              CollectionUUID uuid) {
     BSONObjBuilder resultWeDontCareAbout;
-    return _collModInternal(opCtx, nss, cmdObj, &resultWeDontCareAbout, uuid);
+    return _collModInternal(opCtx,
+                            nss,
+                            cmdObj,
+                            &resultWeDontCareAbout,
+                            /*updateUniqueIndexVersion*/ false,
+                            uuid);
+}
+
+Status collModForUniqueIndexUpgrade(OperationContext* opCtx,
+                                    const NamespaceString& nss,
+                                    const BSONObj& cmdObj) {
+    // A cmdObj with an empty collMod, i.e. nFields = 1, implies that it is a Unique Index
+    // upgrade collMod.
+    bool upgradeUniqueIndex = (cmdObj.nFields() == 1);
+
+    // Update version for all non-replicated unique indexes on upgrade i.e. setFCV=4.0. The unique
+    // indexes in "local" database would also get upgraded as part of this.
+    if (upgradeUniqueIndex && nss.ns() == "admin.system.version") {
+        auto schemaStatus = updateUniqueIndexVersionNonReplicated(opCtx);
+        if (!schemaStatus.isOK()) {
+            return schemaStatus;
+        }
+    }
+
+    BSONObjBuilder resultWeDontCareAbout;
+    return _collModInternal(opCtx,
+                            nss,
+                            cmdObj,
+                            &resultWeDontCareAbout,
+                            upgradeUniqueIndex,
+                            /*UUID*/ boost::none);
 }
 
 void addCollectionUUIDs(OperationContext* opCtx) {
@@ -593,6 +648,127 @@ void addCollectionUUIDs(OperationContext* opCtx) {
                                            WriteConcernOptions::SyncMode::UNSET,
                                            /*timeout*/ INT_MAX);
     repl::ReplicationCoordinator::get(opCtx)->awaitReplication(opCtx, awaitOpTime, writeConcern);
+}
+
+Status _updateNonReplicatedIndexVersionPerCollection(OperationContext* opCtx, Collection* coll) {
+    BSONObjBuilder collModObjBuilder;
+    collModObjBuilder.append("collMod", coll->ns().coll());
+    BSONObj collModObj = collModObjBuilder.done();
+
+    BSONObjBuilder resultWeDontCareAbout;
+    auto collModStatus = _collModInternal(opCtx,
+                                          coll->ns(),
+                                          collModObj,
+                                          &resultWeDontCareAbout,
+                                          /*updateUniqueIndexVersion*/ true,
+                                          /*UUID*/ boost::none);
+    return collModStatus;
+}
+
+Status _updateNonReplicatedUniqueIndexVersionPerDatabase(OperationContext* opCtx,
+                                                         const std::string& dbname) {
+    AutoGetDb autoDb(opCtx, dbname, MODE_X);
+    Database* const db = autoDb.getDb();
+
+    // Iterate through all collections if we're in the "local" database.
+    if (dbname == "local") {
+        for (auto collectionIt = db->begin(); collectionIt != db->end(); ++collectionIt) {
+            Collection* coll = *collectionIt;
+
+            auto collModStatus = _updateNonReplicatedIndexVersionPerCollection(opCtx, coll);
+            if (!collModStatus.isOK())
+                return collModStatus;
+        }
+    } else {
+        // If we're not in the "local" database, the only non-replicated collection
+        // is system.profile, if present.
+        Collection* coll =
+            db ? db->getCollection(opCtx, NamespaceString(dbname, "system.profile")) : nullptr;
+        if (!coll)
+            return Status::OK();
+
+        auto collModStatus = _updateNonReplicatedIndexVersionPerCollection(opCtx, coll);
+        if (!collModStatus.isOK())
+            return collModStatus;
+    }
+    return Status::OK();
+}
+
+void _updateUniqueIndexVersion(OperationContext* opCtx, const std::string& dbname) {
+    // Iterate through all replicated collections of the database, for unique index update.
+    // Unique indexes belonging to all non-replicated collections would be updated within
+    // collModForUniqueIndexUpgrade() as part of updateUniqueIndexVersionNonReplicated() invocation.
+    {
+        if (dbname == "local")
+            return;
+
+        AutoGetDb autoDb(opCtx, dbname, MODE_X);
+        Database* const db = autoDb.getDb();
+        // If the database no longer exists, nothing more to do.
+        if (!db)
+            return;
+
+        for (auto collectionIt = db->begin(); collectionIt != db->end(); ++collectionIt) {
+            Collection* coll = *collectionIt;
+            NamespaceString collNSS = coll->ns();
+
+            // Skip non-replicated collection.
+            if (collNSS.coll() == "system.profile")
+                continue;
+
+            BSONObjBuilder collModObjBuilder;
+            collModObjBuilder.append("collMod", collNSS.coll());
+            BSONObj collModObj = collModObjBuilder.done();
+
+            uassertStatusOK(collModForUniqueIndexUpgrade(opCtx, collNSS, collModObj));
+        }
+    }
+}
+
+void updateUniqueIndexVersionOnUpgrade(OperationContext* opCtx) {
+    // Update version for all unique indexes except the _id index.
+    std::vector<std::string> dbNames;
+    StorageEngine* storageEngine = opCtx->getServiceContext()->getGlobalStorageEngine();
+    {
+        Lock::GlobalLock lk(opCtx, MODE_IS, Date_t::max());
+        storageEngine->listDatabases(&dbNames);
+    }
+
+    for (auto it = dbNames.begin(); it != dbNames.end(); ++it) {
+        auto dbName = *it;
+
+        _updateUniqueIndexVersion(opCtx, dbName);
+    }
+
+    const auto& clientInfo = repl::ReplClientInfo::forClient(opCtx->getClient());
+    auto awaitOpTime = clientInfo.getLastOp();
+
+    log() << "Finished updating version of unique indexes for upgrade, waiting for all"
+          << " index updates to be committed at optime " << awaitOpTime;
+
+    const WriteConcernOptions writeConcern(WriteConcernOptions::kMajority,
+                                           WriteConcernOptions::SyncMode::UNSET,
+                                           /*timeout*/ INT_MAX);
+    repl::ReplicationCoordinator::get(opCtx)->awaitReplication(opCtx, awaitOpTime, writeConcern);
+}
+
+Status updateUniqueIndexVersionNonReplicated(OperationContext* opCtx) {
+    // Update index version for all unique indexes belonging to all non-replicated collections.
+    // (_id indexes are not updated).
+    std::vector<std::string> dbNames;
+    StorageEngine* storageEngine = opCtx->getServiceContext()->getGlobalStorageEngine();
+    {
+        Lock::GlobalLock lk(opCtx, MODE_IS, Date_t::max());
+        storageEngine->listDatabases(&dbNames);
+    }
+    for (auto it = dbNames.begin(); it != dbNames.end(); ++it) {
+        auto dbName = *it;
+        auto schemaStatus = _updateNonReplicatedUniqueIndexVersionPerDatabase(opCtx, dbName);
+        if (!schemaStatus.isOK()) {
+            return schemaStatus;
+        }
+    }
+    return Status::OK();
 }
 
 }  // namespace mongo

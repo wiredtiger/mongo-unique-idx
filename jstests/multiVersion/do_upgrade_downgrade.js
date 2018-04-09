@@ -33,6 +33,57 @@
                 }
             }
         }
+
+        // Create a unique index on collection "foo".
+        for (let j in dbs) {
+            let testDB = conn.getDB(dbs[j]);
+            testDB.getCollectionInfos().forEach(function(c) {
+                if (c.name == "foo") {
+                    let foo = testDB.getCollection(c.name);
+                    foo.createIndex({id: 1}, {unique: true});
+                }
+            });
+        }
+    };
+
+    let recreateUniqueIndexes = function(db, secondary) {
+        // Obtain a list of all unique indexes
+        var unique_idx = [];
+        db.adminCommand("listDatabases").databases.forEach(function(d) {
+            if (secondary && !(d.name == "local")) {
+                // We can drop and recreate indexes only in "local" database on secondary. On
+                // secondary, obtain unique index list from "local" database only.
+                return;
+            }
+            let mdb = db.getSiblingDB(d.name);
+            mdb.getCollectionInfos().forEach(function(c) {
+                let currentCollection = mdb.getCollection(c.name);
+                currentCollection.getIndexes().forEach(function(i) {
+                    if (i.unique) {
+                        unique_idx.push(i);
+                    }
+                });
+            });
+        });
+
+        // Drop all the indexes in the unique index list
+        for (let i = 0; i < unique_idx.length; i++) {
+            let res = db.getSiblingDB(unique_idx[i].ns.split(".")[0]).runCommand({
+                dropIndexes: unique_idx[i].ns.split(".")[1],
+                index: unique_idx[i].name
+            });
+            assert.commandWorked(res);
+        }
+
+        // Create all the indexes in the unique index list - these will now be created in the
+        // downgraded version
+        for (let i = 0; i < unique_idx.length; i++) {
+            let res = db.getSiblingDB(unique_idx[i].ns.split(".")[0]).runCommand({
+                createIndexes: unique_idx[i].ns.split(".")[1],
+                indexes: [{"key": unique_idx[i].key, "name": unique_idx[i].name, "unique": true}]
+            });
+            assert.commandWorked(res);
+        }
     };
 
     // Create and clear dbpath
@@ -81,6 +132,9 @@
         checkFCV(adminDB, lastStableFCV);
         checkCollectionUUIDs(adminDB);
 
+        // Drop and recreate unique indexes with the older FCV
+        recreateUniqueIndexes(adminDB, false);
+
         // Stop latest binary version mongod.
         MongoRunner.stopMongod(conn);
 
@@ -103,7 +157,8 @@
         conn = startMongodWithVersion(noCleanDataOptions, latestBinary);
         adminDB = conn.getDB("admin");
 
-        // Ensure setFeatureCompatibilityVersion to latest succeeds and all collections have UUIDs.
+        // Ensure setFeatureCompatibilityVersion to latest succeeds, all collections have UUIDs
+        // and all unique indexes are in new version.
         setFCV(adminDB, latestFCV);
         checkFCV(adminDB, latestFCV);
         checkCollectionUUIDs(adminDB);
@@ -146,8 +201,8 @@
                 checkFCV(secondaryAdminDB, latestFCV);
             }
 
-            // Ensure all collections have UUIDs in latest featureCompatibilityVersion mode on both
-            // primary and secondaries.
+            // Ensure all collections have UUIDs and unique indexes are in new version in latest
+            // featureCompatibilityVersion mode on both primary and secondaries.
             checkCollectionUUIDs(primaryAdminDB);
             for (let j = 0; j < secondaries.length; j++) {
                 let secondaryAdminDB = secondaries[j].getDB("admin");
@@ -170,6 +225,15 @@
         for (let j = 0; j < secondaries.length; j++) {
             let secondaryAdminDB = secondaries[j].getDB("admin");
             checkCollectionUUIDs(secondaryAdminDB);
+        }
+
+        // Drop and recreate unique indexes with the older FCV
+        recreateUniqueIndexes(primaryAdminDB, false);
+
+        // Now drop and recreate unique indexes on secondaries' "local" database
+        for (let j = 0; j < secondaries.length; j++) {
+            let secondaryAdminDB = secondaries[j].getDB("admin");
+            recreateUniqueIndexes(secondaryAdminDB, true);
         }
 
         // Stop latest binary version replica set.
@@ -204,8 +268,8 @@
         primaryAdminDB = rst.getPrimary().getDB("admin");
         secondaries = rst.getSecondaries();
 
-        // Ensure all collections have UUIDs after switching back to latest
-        // featureCompatibilityVersion on both primary and secondaries.
+        // Ensure all collections have UUIDs and unique indexes are in new version after switching
+        // back to latest featureCompatibilityVersion on both primary and secondaries.
         setFCV(primaryAdminDB, latestFCV);
         rst.awaitReplication();
 
