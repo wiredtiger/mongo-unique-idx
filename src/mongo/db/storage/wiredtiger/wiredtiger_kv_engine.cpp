@@ -840,15 +840,16 @@ SortedDataInterface* WiredTigerKVEngine::getGroupedSortedDataInterface(Operation
             WiredTigerIndex::kMinimumIndexVersion,
             WiredTigerIndex::kMaximumIndexVersion);
 
+        // Create new format unique index when fCV is upgrading or upgraded. Use the unsafe version
+	// because fCV isn't available on startup before the first index is created. If fCV isn't
+        // available use the index format version present in the index's app metadata to determine
+	// which format index should be used.
         bool upgradingOrUpgraded =
             (serverGlobalParams.featureCompatibility.getVersionUnsafe() ==
                  ServerGlobalParams::FeatureCompatibility::Version::kUpgradingTo40 ||
              serverGlobalParams.featureCompatibility.getVersionUnsafe() ==
                  ServerGlobalParams::FeatureCompatibility::Version::kFullyUpgradedTo40);
 
-        // Create new format unique index when fCV is upgrading or upgraded. On mongod startup the
-        // existing indexes are created before initializing fCV. So, use the index format version
-        // present in index's app metadata do determine if new format index should be created.
         if (!desc->isIdIndex() &&
             (upgradingOrUpgraded ||
              version.getValue() >= WiredTigerIndex::kDataFormatV3KeyStringV0UniqueIndexV1Version))

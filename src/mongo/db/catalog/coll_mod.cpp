@@ -560,9 +560,8 @@ Status collModForUniqueIndexUpgrade(OperationContext* opCtx,
     // upgrade collMod.
     bool upgradeUniqueIndex = (cmdObj.nFields() == 1);
 
-    // Update version for all non-replicated unique indexes on upgrade i.e. setFCV=4.0. The unique
-    // indexes in "local" database would also get upgraded as part of this.
-    if (upgradeUniqueIndex && nss.ns() == "admin.system.version") {
+    // Update version for all non-replicated unique indexes on upgrade i.e. setFCV=4.0.
+    if (upgradeUniqueIndex && nss == NamespaceString::kServerConfigurationNamespace) {
         auto schemaStatus = updateUniqueIndexVersionNonReplicated(opCtx);
         if (!schemaStatus.isOK()) {
             return schemaStatus;
@@ -696,7 +695,7 @@ Status _updateNonReplicatedUniqueIndexVersionPerDatabase(OperationContext* opCtx
 
 void _updateUniqueIndexVersion(OperationContext* opCtx, const std::string& dbname) {
     // Iterate through all replicated collections of the database, for unique index update.
-    // Unique indexes belonging to all non-replicated collections would be updated within
+    // Unique indexes belonging to all non-replicated collections are updated within
     // collModForUniqueIndexUpgrade() as part of updateUniqueIndexVersionNonReplicated() invocation.
     {
         if (dbname == "local")
@@ -736,7 +735,6 @@ void updateUniqueIndexVersionOnUpgrade(OperationContext* opCtx) {
 
     for (auto it = dbNames.begin(); it != dbNames.end(); ++it) {
         auto dbName = *it;
-
         _updateUniqueIndexVersion(opCtx, dbName);
     }
 

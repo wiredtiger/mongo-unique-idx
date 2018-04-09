@@ -433,7 +433,7 @@ Status ReplicationCoordinatorExternalStateImpl::initializeReplSetStorage(Operati
         // ShardServers are started up by default with featureCompatibilityVersion 3.6, so we don't
         // want update those indexes until the cluster's featureCompatibilityVersion is explicitly
         // set to 4.0 by the config server. The below unique index update for non-replicated
-        // collections only occurs on the primary; updates for unique index belonging to
+        // collections only occurs on the primary; updates for unique indexes belonging to
         // non-replicated collections are done on secondaries during InitialSync. When the config
         // server sets the featureCompatibilityVersion to 4.0, the shard primary will update unique
         // indexes belonging to all the collections. One special case here is if a shard is already

@@ -867,7 +867,7 @@ BSONObj IndexCatalogImpl::getDefaultIdIndexSpec(
     ServerGlobalParams::FeatureCompatibility::Version featureCompatibilityVersion) const {
     dassert(_idObj["_id"].type() == NumberInt);
 
-    const auto indexVersion = IndexDescriptor::getDefaultIndexVersion(featureCompatibilityVersion);
+    const auto indexVersion = IndexDescriptor::getDefaultIndexVersion();
 
     BSONObjBuilder b;
     b.append("v", static_cast<int>(indexVersion));

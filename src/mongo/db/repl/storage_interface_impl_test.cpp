@@ -2580,7 +2580,7 @@ TEST_F(StorageInterfaceImplTest, UpgradeUniqueIndexVersionNonReplicatedUpgradesL
     auto indexCatalog = coll->getIndexCatalog();
     const IndexDescriptor* desc = indexCatalog->findIndexByName(opCtx, "x_1");
 
-    // This shoould change.
+    // This should change.
     ASSERT_EQUALS(static_cast<int>(IndexDescriptor::IndexVersion::kV2),
                   desc->infoObj()["v"].numberLong());
 }

@@ -1116,7 +1116,7 @@ void InitialSyncer::_rollbackCheckerCheckForRollbackCallback(
     // secondaries. See comment in
     // ReplicationCoordinatorExternalStateImpl::initializeReplSetStorage() for the explanation of
     // why we do this.
-    if (serverGlobalParams.featureCompatibility.getVersionUnsafe() ==
+    if (serverGlobalParams.featureCompatibility.getVersion() ==
         ServerGlobalParams::FeatureCompatibility::Version::kFullyUpgradedTo40) {
         auto opCtx = makeOpCtx();
         auto updateStatus = _storage->upgradeUniqueIndexVersionNonReplicated(opCtx.get());

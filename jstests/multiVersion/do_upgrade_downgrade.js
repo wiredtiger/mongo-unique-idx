@@ -51,8 +51,9 @@
         var unique_idx = [];
         db.adminCommand("listDatabases").databases.forEach(function(d) {
             if (secondary && !(d.name == "local")) {
-                // We can drop and recreate indexes only in "local" database on secondary. On
-                // secondary, obtain unique index list from "local" database only.
+                // All replicated indexes will be dropped on the primary, and have that
+                // drop propogated. Secondary nodes need to recreate unique indexes
+                // associated with local collections.
                 return;
             }
             let mdb = db.getSiblingDB(d.name);
