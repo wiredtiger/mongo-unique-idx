@@ -90,9 +90,6 @@ static const int kKeyStringV1Version = 8;
 static const int kMinimumIndexVersion = kKeyStringV0Version;
 static const int kMaximumIndexVersion = kKeyStringV1Version;
 
-// This is the size constituted by CType byte and the kEnd byte in a Keystring object.
-constexpr std::size_t kCTypeAndKEndSize = 2;
-
 bool hasFieldNames(const BSONObj& obj) {
     BSONForEach(e, obj) {
         if (e.fieldName()[0])
@@ -1165,14 +1162,15 @@ private:
     void _updateIdAndTypeBits() {
         TRACE_INDEX << "KeyString: [" << _key.toString() << "]";
 
-        auto keySize = KeyString::getKeySize(
-            _key.getBuffer(), _key.getSize(), _idx.ordering(), _key.getTypeBits());
+        auto keySize = _key.getSize();
+        invariant(keySize > 0);
+        uint8_t lastByte = uint8_t(_key.getBuffer()[keySize - 1]);
 
         // An index can have both old and new format index keys after a rolling upgrade. Detect
-        // correct index key format by checking key's size. Old format keys just had the index key
-        // while new format key has index key + Record id.
-        // When KeyString contains just the key, the RecordId is in value.
-        if (_key.getSize() == keySize + kCTypeAndKEndSize) {
+        // correct index key format by checking its last byte. Old unique index format keys just had
+        // the index key, which must end in a kEnd (0x4) byte, the while new format key has index
+        // key + Record id, but ensures the encoded RecordId will not end in a 0x4 byte.
+        if (lastByte == 0x4) {
             _updateIdAndTypeBitsFromValue();
         } else {
             // The RecordId is in the key at the end.
