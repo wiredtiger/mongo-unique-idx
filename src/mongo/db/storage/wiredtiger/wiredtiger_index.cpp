@@ -314,7 +314,8 @@ WiredTigerIndex::WiredTigerIndex(OperationContext* ctx,
         if (appMetadatFormatVersion == WiredTigerIndex::kDataFormatV2KeyStringV1IndexVersion) {
             ss << "formatVersion=" << WiredTigerIndex::kDataFormatV4KeyStringV1UniqueIndexV2Version
                << ',';
-        } else if (appMetadatFormatVersion == WiredTigerIndex::kDataFormatV1KeyStringV0IndexVersion) {
+        } else if (appMetadatFormatVersion ==
+                   WiredTigerIndex::kDataFormatV1KeyStringV0IndexVersion) {
             ss << "formatVersion=" << WiredTigerIndex::kDataFormatV3KeyStringV0UniqueIndexV1Version
                << ',';
         }
