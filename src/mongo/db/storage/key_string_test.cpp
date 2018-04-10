@@ -1161,52 +1161,6 @@ TEST_F(KeyStringTest, RecordIds) {
     }
 }
 
-TEST_F(KeyStringTest, RecordIdBoundaries) {
-
-    // Test that record ID encoding/decoding works as expected around byte boundaries.
-    // The encoding allows for up to 8 additional bytes be used.
-    for (int i = 0; i < 8; i++) {
-        // Test with values surrounding byte boundaries, not just on them Make this
-        // range large enough to cover the bit-shifting due to size bits, which is
-        // 5 bits from both the first and last byte - i.e: 2^10
-        for (int j = -2048; j <= 2048; j++) {
-            // Multiply the byte offset chosen, by the byte size
-            int rawId = 2^(i * 8) + j;
-
-            if (rawId < 0 || rawId > RecordId::max().repr())
-                continue;
-            // Test encoding / decoding of single RecordIds
-            const RecordId rid = RecordId(rawId);
-
-            const KeyString ks(version, rid);
-            ASSERT_GTE(ks.getSize(), 2u);
-            ASSERT_LTE(ks.getSize(), 10u);
-
-            ASSERT_EQ(KeyString::decodeRecordIdAtEnd(ks.getBuffer(), ks.getSize()), rid);
-
-	    // Ensure that the final byte isn't 0x4 - which would mean the RecordId could
-	    // look like a KeyString - which isn't allowed in the unique index encodings.
-	    const char *encodedRid = ks.getBuffer();
-	    ASSERT_NE(encodedRid[ks.getSize() - 1], 0x4);
-
-            {
-                BufReader reader(ks.getBuffer(), ks.getSize());
-                ASSERT_EQ(KeyString::decodeRecordId(&reader), rid);
-                ASSERT(reader.atEof());
-            }
-
-            if (rid.isNormal()) {
-                ASSERT_GT(ks, KeyString(version, RecordId()));
-                ASSERT_GT(ks, KeyString(version, RecordId::min()));
-                ASSERT_LT(ks, KeyString(version, RecordId::max()));
-
-                ASSERT_GT(ks, KeyString(version, RecordId(rid.repr() - 1)));
-                ASSERT_LT(ks, KeyString(version, RecordId(rid.repr() + 1)));
-            }
-        }
-    }
-}
-
 TEST_F(KeyStringTest, KeyWithTooManyTypeBitsCausesUassert) {
     BSONObj obj;
     {
