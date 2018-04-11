@@ -45,6 +45,7 @@
 namespace mongo {
 namespace {
 
+/* XXX Todo: Might need fixing */
 const auto kIndexVersion = IndexDescriptor::IndexVersion::kV2;
 
 /**

@@ -142,8 +142,11 @@ public:
         // This is necessary to set up CurOp and update the Top stats.
         OldClientContext ctx(opCtx, toReIndexNss.ns());
 
+	/* XXX Todo: Get Maria's input */
+	const auto featureCompatibilityVersion =
+            serverGlobalParams.featureCompatibility.getVersion();
         const auto defaultIndexVersion =
-            IndexDescriptor::getDefaultIndexVersion();
+            IndexDescriptor::getDefaultIndexVersion(featureCompatibilityVersion);
 
         vector<BSONObj> all;
         {

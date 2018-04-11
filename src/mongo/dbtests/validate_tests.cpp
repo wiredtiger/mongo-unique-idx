@@ -46,6 +46,7 @@ namespace ValidateTests {
 using std::unique_ptr;
 
 namespace {
+/* XXX Todo: Might need fixing */
 const auto kIndexVersion = IndexDescriptor::IndexVersion::kV2;
 }  // namespace
 

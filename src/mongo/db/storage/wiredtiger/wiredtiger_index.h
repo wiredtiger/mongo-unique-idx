@@ -84,14 +84,6 @@ public:
      */
     static int Create(OperationContext* opCtx, const std::string& uri, const std::string& config);
 
-    // Keystring format 7 was used in 3.3.6 - 3.3.8 development releases.
-    static const int kDataFormatV1KeyStringV0IndexVersion;
-    static const int kDataFormatV2KeyStringV1IndexVersion;
-    static const int kDataFormatV3KeyStringV0UniqueIndexV1Version;
-    static const int kDataFormatV4KeyStringV1UniqueIndexV2Version;
-    static const int kMinimumIndexVersion;
-    static const int kMaximumIndexVersion;
-
     WiredTigerIndex(OperationContext* ctx,
                     const std::string& uri,
                     const IndexDescriptor* desc,

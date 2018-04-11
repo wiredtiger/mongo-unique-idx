@@ -84,6 +84,12 @@ static const int TempKeyMaxSize = 1024;  // this goes away with SERVER-3372
 
 static const WiredTigerItem emptyItem(NULL, 0);
 
+// Keystring format 7 was used in 3.3.6 - 3.3.8 development releases.
+static const int kKeyStringV0Version = 6;
+static const int kKeyStringV1Version = 8;
+static const int kMinimumIndexVersion = kKeyStringV0Version;
+static const int kMaximumIndexVersion = kKeyStringV1Version;
+
 // This is the size constituted by CType byte and the kEnd byte in a Keystring object.
 constexpr std::size_t kCTypeAndKEndSize = 2;
 
@@ -117,19 +123,6 @@ Status checkKeySize(const BSONObj& key) {
 }
 }  // namespace
 
-
-// Keystring format 7 was used in 3.3.6 - 3.3.8 development releases. 4.0 onwards, with fCV=4.0
-// unique indexes can be either format version 9 or 10. An existing format 6 unique index will
-// upgrade to format 9 and an existing format 8 unique index will upgrade to format 10 on
-// setFCV=4.0.
-const int WiredTigerIndex::kDataFormatV1KeyStringV0IndexVersion = 6;
-const int WiredTigerIndex::kDataFormatV2KeyStringV1IndexVersion = 8;
-const int WiredTigerIndex::kDataFormatV3KeyStringV0UniqueIndexV1Version = 9;
-const int WiredTigerIndex::kDataFormatV4KeyStringV1UniqueIndexV2Version = 10;
-const int WiredTigerIndex::kMinimumIndexVersion =
-    WiredTigerIndex::kDataFormatV1KeyStringV0IndexVersion;
-const int WiredTigerIndex::kMaximumIndexVersion =
-    WiredTigerIndex::kDataFormatV4KeyStringV1UniqueIndexV2Version;
 
 Status WiredTigerIndex::dupKeyError(const BSONObj& key) {
     StringBuilder sb;
@@ -173,21 +166,12 @@ StatusWith<std::string> WiredTigerIndex::parseIndexOptions(const BSONObj& option
 std::string WiredTigerIndex::generateAppMetadataString(const IndexDescriptor& desc) {
     StringBuilder ss;
 
-    int keyStringVersion;
-
-    // With FCV 4.0, unique indexes are format version 9 or 10. An _id index is also a unique index,
-    // but the data format version does not change for _id index.
-    if (desc.unique() && !desc.isIdIndex() &&
-        (serverGlobalParams.featureCompatibility.isVersionInitialized() &&
-         serverGlobalParams.featureCompatibility.isVersionUpgradingOrUpgraded())) {
-        keyStringVersion = desc.version() >= IndexDescriptor::IndexVersion::kV2
-            ? WiredTigerIndex::kDataFormatV4KeyStringV1UniqueIndexV2Version
-            : WiredTigerIndex::kDataFormatV3KeyStringV0UniqueIndexV1Version;
-    } else {
-        keyStringVersion = desc.version() >= IndexDescriptor::IndexVersion::kV2
-            ? WiredTigerIndex::kDataFormatV2KeyStringV1IndexVersion
-            : WiredTigerIndex::kDataFormatV1KeyStringV0IndexVersion;
-    }
+    // Index version 2, greater than and equal to 4 use KeyString version 1.
+    const int keyStringVersion =
+        (desc.version() == IndexDescriptor::IndexVersion::kV2 ||
+	 desc.version() >= IndexDescriptor::IndexVersion::kV2Unique)
+        ? kKeyStringV1Version
+	: kKeyStringV0Version;
 
     // Index metadata
     ss << ",app_metadata=("
@@ -284,7 +268,7 @@ WiredTigerIndex::WiredTigerIndex(OperationContext* ctx,
       _indexName(desc->indexName()),
       _prefix(prefix) {
     auto version = WiredTigerUtil::checkApplicationMetadataFormatVersion(
-        ctx, uri, WiredTigerIndex::kMinimumIndexVersion, WiredTigerIndex::kMaximumIndexVersion);
+        ctx, uri, kMinimumIndexVersion, kMaximumIndexVersion);
     if (!version.isOK()) {
         Status versionStatus = version.getStatus();
         Status indexVersionStatus(
@@ -298,44 +282,9 @@ WiredTigerIndex::WiredTigerIndex(OperationContext* ctx,
         fassertFailedWithStatusNoTrace(28579, indexVersionStatus);
     }
 
-    int appMetadatFormatVersion = version.getValue();
-    // When recreating a unique index on fCV upgrade, update the index app meatadata with new format
-    // version. Format versions are updated like this: 6->9  and 8->10. The data format version for
-    // _id index does not change on upgrade.
-    if (desc->unique() && !desc->isIdIndex() &&
-        (serverGlobalParams.featureCompatibility.isVersionInitialized() &&
-         serverGlobalParams.featureCompatibility.isVersionUpgradingOrUpgraded()) &&
-        (appMetadatFormatVersion == WiredTigerIndex::kDataFormatV2KeyStringV1IndexVersion ||
-         appMetadatFormatVersion == WiredTigerIndex::kDataFormatV1KeyStringV0IndexVersion)) {
-        StringBuilder ss;
-
-        // Index metadata
-        ss << ",app_metadata=(";
-        if (appMetadatFormatVersion == WiredTigerIndex::kDataFormatV2KeyStringV1IndexVersion) {
-            ss << "formatVersion=" << WiredTigerIndex::kDataFormatV4KeyStringV1UniqueIndexV2Version
-               << ',';
-        } else if (appMetadatFormatVersion == WiredTigerIndex::kDataFormatV1KeyStringV0IndexVersion) {
-            ss << "formatVersion=" << WiredTigerIndex::kDataFormatV3KeyStringV0UniqueIndexV1Version
-               << ',';
-        }
-        ss << "infoObj=" << desc->infoObj().jsonString() << "),";
-
-        WiredTigerRecoveryUnit* recoveryUnit = WiredTigerRecoveryUnit::get(ctx);
-        WT_SESSION* session = recoveryUnit->getSession()->getSession();
-
-        // Make the alter call to update format version in WT table metadata.
-        invariantWTOK(session->alter(session, uri.c_str(), ss.str().c_str()));
-    }
-
-    // Index data format 6 and 9 correspond to KeyString version V0 and data format 8 and 10
-    // correspond to
-    // KeyString version V1. In 4.0, on fCV upgrade format versions are updated like this: 6->9 and
-    // 8->10.
+    /* XXX Todo: On startup make alter call */
     _keyStringVersion =
-        appMetadatFormatVersion == WiredTigerIndex::kDataFormatV2KeyStringV1IndexVersion ||
-            appMetadatFormatVersion == WiredTigerIndex::kDataFormatV4KeyStringV1UniqueIndexV2Version
-        ? KeyString::Version::V1
-        : KeyString::Version::V0;
+        version.getValue() == kKeyStringV1Version ? KeyString::Version::V1 : KeyString::Version::V0;
 
     if (!isReadOnly) {
         uassertStatusOK(WiredTigerUtil::setTableLogging(

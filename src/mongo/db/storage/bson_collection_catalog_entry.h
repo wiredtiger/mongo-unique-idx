@@ -89,6 +89,8 @@ public:
 
         void updateTTLSetting(long long newExpireSeconds);
 
+	void updateIndexVersion();
+
         std::string name() const {
             return spec["name"].String();
         }

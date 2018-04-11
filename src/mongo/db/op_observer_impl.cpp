@@ -564,11 +564,13 @@ void OpObserverImpl::onCreateCollection(OperationContext* opCtx,
         b.appendElements(optionsToStore.toBSON());
     }
 
-    // Include the full _id index spec in the oplog for index versions >= 2.
+    // Include the full _id index spec in the oplog for index versions 2 and 4+.
     if (!idIndex.isEmpty()) {
         auto versionElem = idIndex[IndexDescriptor::kIndexVersionFieldName];
         invariant(versionElem.isNumber());
-        if (IndexDescriptor::IndexVersion::kV2 <=
+        if (IndexDescriptor::IndexVersion::kV2 ==
+            static_cast<IndexDescriptor::IndexVersion>(versionElem.numberInt()) ||
+            IndexDescriptor::IndexVersion::kV2Unique <=
             static_cast<IndexDescriptor::IndexVersion>(versionElem.numberInt())) {
             b.append("idIndex", idIndex);
         }

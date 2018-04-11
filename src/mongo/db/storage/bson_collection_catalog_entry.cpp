@@ -207,6 +207,33 @@ KVPrefix BSONCollectionCatalogEntry::getIndexPrefix(OperationContext* opCtx,
     return md.indexes[offset].prefix;
 }
 
+void BSONCollectionCatalogEntry::IndexMetaData::updateIndexVersion() {
+    BSONObjBuilder b;
+    bool foundExistingVersion = false;
+    for (BSONObjIterator bi(spec); bi.more();) {
+        BSONElement e = bi.next();
+	if (e.fieldNameStringData() == "v") {
+            // Update kV1 to kV1Unique and kV2 to kV2Unique
+            auto old_version = static_cast<IndexDescriptor::IndexVersion>(e.numberInt());
+	    invariant(old_version == IndexDescriptor::IndexVersion::kV1 ||
+                      old_version == IndexDescriptor::IndexVersion::kV2);
+	    if (old_version == IndexDescriptor::IndexVersion::kV1) {
+                b.append("v", static_cast<int>(IndexDescriptor::IndexVersion::kV1Unique));
+            } else {
+                b.append("v", static_cast<int>(IndexDescriptor::IndexVersion::kV2Unique));
+	    }
+	    foundExistingVersion = true;
+            continue;
+	}
+        b.append(e);
+    }
+
+    // We expect to be updating either kV1 or kV2 version indexes, so there must exist a
+    // version field in the metadata being updated.
+    invariant(foundExistingVersion);
+    spec = b.obj();
+}
+
 // --------------------------
 
 void BSONCollectionCatalogEntry::IndexMetaData::updateTTLSetting(long long newExpireSeconds) {

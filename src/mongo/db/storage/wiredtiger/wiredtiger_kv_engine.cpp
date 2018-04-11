@@ -834,28 +834,13 @@ SortedDataInterface* WiredTigerKVEngine::getGroupedSortedDataInterface(Operation
     if (desc->unique()) {
         // MongoDB 4.0 onwards unique indexes have a new data foramt. _id indexes continue to remain
         // in old format.
-        auto version = WiredTigerUtil::checkApplicationMetadataFormatVersion(
-            opCtx,
-            _uri(ident),
-            WiredTigerIndex::kMinimumIndexVersion,
-            WiredTigerIndex::kMaximumIndexVersion);
-
-        // Create new format unique index when fCV is upgrading or upgraded. Use the unsafe version
-	// because fCV isn't available on startup before the first index is created. If fCV isn't
-        // available use the index format version present in the index's app metadata to determine
-	// which format index should be used.
-        bool upgradingOrUpgraded =
-            (serverGlobalParams.featureCompatibility.getVersionUnsafe() ==
-                 ServerGlobalParams::FeatureCompatibility::Version::kUpgradingTo40 ||
-             serverGlobalParams.featureCompatibility.getVersionUnsafe() ==
-                 ServerGlobalParams::FeatureCompatibility::Version::kFullyUpgradedTo40);
-
-        if (!desc->isIdIndex() &&
-            (upgradingOrUpgraded ||
-             version.getValue() >= WiredTigerIndex::kDataFormatV3KeyStringV0UniqueIndexV1Version))
+	if (desc->version() == IndexDescriptor::IndexVersion::kV1Unique ||
+            desc->version() == IndexDescriptor::IndexVersion::kV2Unique) {
+            invariant(!desc->isIdIndex());
             return new WiredTigerIndexUniqueV2(opCtx, _uri(ident), desc, prefix, _readOnly);
-        else
+	} else {
             return new WiredTigerIndexUnique(opCtx, _uri(ident), desc, prefix, _readOnly);
+	}
     }
 
     return new WiredTigerIndexStandard(opCtx, _uri(ident), desc, prefix, _readOnly);

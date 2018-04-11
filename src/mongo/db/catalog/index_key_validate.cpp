@@ -122,7 +122,8 @@ Status validateKeyPattern(const BSONObj& key, IndexDescriptor::IndexVersion inde
 
         switch (indexVersion) {
             case IndexVersion::kV0:
-            case IndexVersion::kV1: {
+            case IndexVersion::kV1:
+            case IndexVersion::kV1Unique: {
                 if (keyElement.type() == BSONType::Object || keyElement.type() == BSONType::Array) {
                     return {code,
                             str::stream() << "Values in index key pattern cannot be of type "
@@ -133,7 +134,8 @@ Status validateKeyPattern(const BSONObj& key, IndexDescriptor::IndexVersion inde
 
                 break;
             }
-            case IndexVersion::kV2: {
+            case IndexVersion::kV2:
+            case IndexVersion::kV2Unique: {
                 if (keyElement.isNumber()) {
                     double value = keyElement.number();
                     if (std::isnan(value)) {
@@ -144,7 +146,9 @@ Status validateKeyPattern(const BSONObj& key, IndexDescriptor::IndexVersion inde
                 } else if (keyElement.type() != BSONType::String) {
                     return {code,
                             str::stream()
-                                << "Values in v:2 index key pattern cannot be of type "
+                                << "Values in v:"
+				<< static_cast<int>(indexVersion)
+				<< " index key pattern cannot be of type "
                                 << typeName(keyElement.type())
                                 << ". Only numbers > 0, numbers < 0, and strings are allowed."};
                 }
@@ -219,6 +223,7 @@ StatusWith<BSONObj> validateIndexSpec(
     bool hasNamespaceField = false;
     bool hasVersionField = false;
     bool hasCollationField = false;
+    bool isUniqueIndex = false;
 
     auto fieldNamesValidStatus = validateIndexSpecFieldNames(indexSpec);
     if (!fieldNamesValidStatus.isOK()) {
@@ -251,8 +256,11 @@ StatusWith<BSONObj> validateIndexSpec(
 
             // Here we always validate the key pattern according to the most recent rules, in order
             // to enforce that all new indexes have well-formed key patterns.
+	    // It is okay to use kLatestStandardIndexVersion even for unique indexes, since the key
+	    // pattern rules are the same.
+	    /* XXX: todo: This is sad, could be better */
             Status keyPatternValidateStatus =
-                validateKeyPattern(indexSpecElem.Obj(), IndexDescriptor::kLatestIndexVersion);
+                validateKeyPattern(indexSpecElem.Obj(), IndexDescriptor::kLatestStandardIndexVersion);
             if (!keyPatternValidateStatus.isOK()) {
                 return keyPatternValidateStatus;
             }
@@ -363,6 +371,13 @@ StatusWith<BSONObj> validateIndexSpec(
             if (!statusWithMatcher.isOK()) {
                 return statusWithMatcher.getStatus();
             }
+        } else if (IndexDescriptor::kUniqueFieldName == indexSpecElemFieldName) {
+            // Note: Here we only consider whether or not "unique" field is specified and that its
+	    // value evaluates to true. "_id" index for instance is unique, but the index spec for
+	    // it doesn't carry a "unique" field. "isUniqueIndex" being false for "_id" indexes is
+	    // on purpose, and in future if we were to make "_id" index specs include
+	    // "unique:true", then we would need to change the logic here to preserve its behavior.
+	    isUniqueIndex = indexSpecElem.trueValue();
         } else {
             // We can assume field name is valid at this point. Validation of fieldname is handled
             // prior to this in validateIndexSpecFieldNames().
@@ -371,8 +386,8 @@ StatusWith<BSONObj> validateIndexSpec(
     }
 
     if (!resolvedIndexVersion) {
-        resolvedIndexVersion =
-            IndexDescriptor::getDefaultIndexVersion();
+	resolvedIndexVersion = IndexDescriptor::getDefaultIndexVersion(
+            featureCompatibility.getVersion(), isUniqueIndex);
     }
 
     if (!hasKeyPatternField) {
@@ -387,7 +402,8 @@ StatusWith<BSONObj> validateIndexSpec(
                               << "' field is a required property of an index specification"};
     }
 
-    if (hasCollationField && *resolvedIndexVersion < IndexVersion::kV2) {
+    if (hasCollationField &&
+        (*resolvedIndexVersion < IndexVersion::kV2 || *resolvedIndexVersion == IndexVersion::kV1Unique)) {
         return {ErrorCodes::CannotCreateIndex,
                 str::stream() << "Invalid index specification " << indexSpec
                               << "; cannot create an index with the '"
@@ -510,10 +526,11 @@ StatusWith<BSONObj> validateIndexSpecCollation(OperationContext* opCtx,
         auto versionElem = indexSpec[IndexDescriptor::kIndexVersionFieldName];
         invariant(versionElem.isNumber());
 
-        if (IndexVersion::kV2 <= static_cast<IndexVersion>(versionElem.numberInt())) {
+        if (IndexVersion::kV2 == static_cast<IndexVersion>(versionElem.numberInt()) ||
+            IndexVersion::kV2Unique <= static_cast<IndexVersion>(versionElem.numberInt())) {
             // The user did not specify an explicit collation for this index and the collection
-            // has a default collator. If we're building a v=2 index, then we should inherit the
-            // collection default. However, if we're building a v=1 index, then we're implicitly
+            // has a default collator. If we're building a v=2,4+ index, then we should inherit the
+            // collection default. However, if we're building a v=1,3 index, then we're implicitly
             // building an index that's using the "simple" collation.
             BSONObjBuilder bob;
 

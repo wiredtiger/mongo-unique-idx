@@ -67,6 +67,7 @@ using namespace mongo;
 using namespace mongo::repl;
 using namespace mongo::repl::rollback_internal;
 
+/* XXX Todo: might need fixing */
 const auto kIndexVersion = IndexDescriptor::IndexVersion::kV2;
 
 class RSRollbackTest : public RollbackTest {

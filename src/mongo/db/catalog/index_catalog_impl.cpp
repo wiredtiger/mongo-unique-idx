@@ -552,7 +552,7 @@ Status IndexCatalogImpl::_isSpecOk(OperationContext* opCtx, const BSONObj& spec)
 
     auto indexVersion = static_cast<IndexVersion>(*vEltAsInt);
 
-    if (indexVersion >= IndexVersion::kV2) {
+    if (indexVersion == IndexVersion::kV2 || indexVersion >= IndexVersion::kV2Unique) {
         auto status = index_key_validate::validateIndexSpecFieldNames(spec);
         if (!status.isOK()) {
             return status;
@@ -653,7 +653,8 @@ Status IndexCatalogImpl::_isSpecOk(OperationContext* opCtx, const BSONObj& spec)
                                      "'collation' field from the index specification"};
         }
 
-        if (static_cast<IndexVersion>(vElt.numberInt()) < IndexVersion::kV2) {
+        if (static_cast<IndexVersion>(vElt.numberInt()) < IndexVersion::kV2 ||
+	    static_cast<IndexVersion>(vElt.numberInt()) == IndexVersion::kV1Unique) {
             return {ErrorCodes::CannotCreateIndex,
                     str::stream() << "Index version " << vElt.fieldNameStringData() << "="
                                   << vElt.numberInt()
@@ -867,15 +868,16 @@ BSONObj IndexCatalogImpl::getDefaultIdIndexSpec(
     ServerGlobalParams::FeatureCompatibility::Version featureCompatibilityVersion) const {
     dassert(_idObj["_id"].type() == NumberInt);
 
-    const auto indexVersion = IndexDescriptor::getDefaultIndexVersion();
+    const auto indexVersion = IndexDescriptor::getDefaultIndexVersion(featureCompatibilityVersion);
 
     BSONObjBuilder b;
     b.append("v", static_cast<int>(indexVersion));
     b.append("name", "_id_");
     b.append("ns", _collection->ns().ns());
     b.append("key", _idObj);
-    if (_collection->getDefaultCollator() && indexVersion >= IndexVersion::kV2) {
-        // Creating an index with the "collation" option requires a v=2 index.
+    if (_collection->getDefaultCollator() &&
+        (indexVersion == IndexVersion::kV2 || indexVersion >= IndexVersion::kV2Unique)) {
+        // Creating an index with the "collation" option requires a v=2 or 4+ index.
         b.append("collation", _collection->getDefaultCollator()->getSpec().toBSON());
     }
     return b.obj();

@@ -50,6 +50,7 @@ using std::string;
 namespace RollbackTests {
 
 namespace {
+/* XXX Todo: Might need fixing */
 const auto kIndexVersion = IndexDescriptor::IndexVersion::kV2;
 
 void dropDatabase(OperationContext* opCtx, const NamespaceString& nss) {

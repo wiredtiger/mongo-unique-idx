@@ -1447,6 +1447,7 @@ TEST_F(RollbackImplObserverInfoTest, NamespacesForOpsExtractsNamespaceOfDropColl
     ASSERT(expectedNamespaces == namespaces);
 }
 
+/* XXX Todo: Might need fixing */
 TEST_F(RollbackImplObserverInfoTest, NamespacesForOpsExtractsNamespaceOfCreateIndexOplogEntry) {
     auto nss = NamespaceString("test", "coll");
     auto indexObj = BSON("createIndexes" << nss.coll() << "ns" << nss.toString() << "v"

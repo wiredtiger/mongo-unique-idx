@@ -363,7 +363,7 @@ void _createIndex(OperationContext* opCtx,
                                 << " because collection " << nss.ns() << " does not exist.";
 
         auto indexInfoObj = BSON(
-            "v" << int(IndexDescriptor::kLatestIndexVersion) << "key" << BSON("a" << 1) << "name"
+            "v" << int(IndexDescriptor::kLatestStandardIndexVersion) << "key" << BSON("a" << 1) << "name"
                 << indexName
                 << "ns"
                 << nss.ns());

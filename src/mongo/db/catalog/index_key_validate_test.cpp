@@ -66,6 +66,10 @@ TEST(IndexKeyValidateTest, KeyElementValueOfZeroFailsForV2Indexes) {
               validateKeyPattern(BSON("x" << -0.0), IndexVersion::kV2));
 }
 
+/*
+ * XXX Todo: Need to update the tests for kV1Unique and kV2Unique indexes
+ */
+
 TEST(IndexKeyValidateTest, KeyElementValueOfZeroSucceedsForV0AndV1Indexes) {
     for (auto indexVersion : {IndexVersion::kV0, IndexVersion::kV1}) {
         ASSERT_OK(validateKeyPattern(BSON("x" << 0), indexVersion));

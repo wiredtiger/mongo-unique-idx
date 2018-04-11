@@ -307,7 +307,7 @@ void _testDropCollectionThrowsExceptionIfThereAreIndexesInProgress(OperationCont
         auto indexCatalog = collection->getIndexCatalog();
         ASSERT_EQUALS(indexCatalog->numIndexesInProgress(opCtx), 0);
         auto indexInfoObj = BSON(
-            "v" << int(IndexDescriptor::kLatestIndexVersion) << "key" << BSON("a" << 1) << "name"
+            "v" << int(IndexDescriptor::kLatestStandardIndexVersion) << "key" << BSON("a" << 1) << "name"
                 << "a_1"
                 << "ns"
                 << nss.ns());

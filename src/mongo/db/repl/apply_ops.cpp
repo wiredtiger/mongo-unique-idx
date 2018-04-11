@@ -249,8 +249,10 @@ Status _applyOps(OperationContext* opCtx,
                             // The index version is populated by prepForApplyOpsIndexInsert().
                             invariant(indexVersion);
                             if (indexVersion.isNumber() &&
-                                (indexVersion.numberInt() >=
-                                 static_cast<int>(IndexDescriptor::IndexVersion::kV2))) {
+                                (indexVersion.numberInt() ==
+                                 static_cast<int>(IndexDescriptor::IndexVersion::kV2) ||
+			         indexVersion.numberInt() >=
+                                 static_cast<int>(IndexDescriptor::IndexVersion::kV2Unique))) {
                                 BSONObjBuilder bob;
                                 bob.append("collation", CollationSpec::kSimpleSpec);
                                 bob.appendElements(indexSpec);

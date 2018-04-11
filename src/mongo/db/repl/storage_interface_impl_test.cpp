@@ -60,6 +60,7 @@ namespace {
 using namespace mongo;
 using namespace mongo::repl;
 
+/* XXX Todo: Might need fixing */
 const auto kIndexVersion = IndexDescriptor::IndexVersion::kV2;
 
 BSONObj makeIdIndexSpec(const NamespaceString& nss) {
@@ -2558,6 +2559,8 @@ TEST_F(StorageInterfaceImplTest, GetCollectionCountReturnsCollectionCount) {
     ASSERT_EQUALS(3UL, count);
 }
 
+/* XXX TODO: fix from here
+ * https://github.com/wiredtiger/mongo-unique-idx/pull/1/files */
 TEST_F(StorageInterfaceImplTest, UpgradeUniqueIndexVersionNonReplicatedUpgradesLocalIndex) {
     auto opCtx = getOperationContext();
     StorageInterfaceImpl storage;
@@ -2581,6 +2584,7 @@ TEST_F(StorageInterfaceImplTest, UpgradeUniqueIndexVersionNonReplicatedUpgradesL
     const IndexDescriptor* desc = indexCatalog->findIndexByName(opCtx, "x_1");
 
     // This should change.
+    /* XXX Todo: Might need fixing */
     ASSERT_EQUALS(static_cast<int>(IndexDescriptor::IndexVersion::kV2),
                   desc->infoObj()["v"].numberLong());
 }

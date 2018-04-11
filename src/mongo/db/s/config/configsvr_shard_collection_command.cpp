@@ -107,13 +107,24 @@ BSONObj makeCreateIndexesCmd(const NamespaceString& nss,
     // Index options.
 
     if (!collation.isEmpty()) {
-        // Creating an index with the "collation" option requires a v=2 index.
+        // Creating an index with the "collation" option requires a v=2, >=4 index.
         index.append("v", static_cast<int>(IndexDescriptor::IndexVersion::kV2));
         index.append("collation", collation);
     }
 
     if (unique && !IndexDescriptor::isIdIndexPattern(keys)) {
         index.appendBool("unique", unique);
+	if (!collation.isEmpty()) {
+	    // Creating a unique index with the "collation" option requires a v=4 index.
+	    index.append("v", static_cast<int>(IndexDescriptor::IndexVersion::kV2Unique));
+	    index.append("collation", collation);
+	}
+    } else {
+	if (!collation.isEmpty()) {
+	    // Creating a standard index with the "collation" option requires a v=2 index.
+	    index.append("v", static_cast<int>(IndexDescriptor::IndexVersion::kV2));
+	    index.append("collation", collation);
+	}
     }
 
     // The outer createIndexes command.

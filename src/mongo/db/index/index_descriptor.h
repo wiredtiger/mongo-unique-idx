@@ -56,8 +56,8 @@ class OperationContext;
  */
 class IndexDescriptor {
 public:
-    enum class IndexVersion { kV0 = 0, kV1 = 1, kV2 = 2 };
-    static constexpr IndexVersion kLatestIndexVersion = IndexVersion::kV2;
+    enum class IndexVersion { kV0 = 0, kV1 = 1, kV2 = 2, kV1Unique = 3, kV2Unique = 4 };
+    static constexpr IndexVersion kLatestStandardIndexVersion = IndexVersion::kV2;
 
     static constexpr StringData k2dIndexBitsFieldName = "bits"_sd;
     static constexpr StringData k2dIndexMinFieldName = "min"_sd;
@@ -132,7 +132,9 @@ public:
     /**
      * Returns the index version to use if it isn't specified in the index specification.
      */
-    static IndexVersion getDefaultIndexVersion();
+    static IndexVersion getDefaultIndexVersion(
+        ServerGlobalParams::FeatureCompatibility::Version featureCompatibilityVersion,
+	bool isUniqueIndex = false);
 
     //
     // Information about the key pattern.

@@ -431,17 +431,20 @@ Status _collModInternal(OperationContext* opCtx,
         coll->getCatalogEntry()->getAllUniqueIndexes(opCtx, &indexNames);
 
         for (size_t i = 0; i < indexNames.size(); i++) {
+            // Update the index version in the system catalog.
+	    coll->getCatalogEntry()->updateIndexVersion(opCtx, indexNames[i]);
+
             const IndexDescriptor* desc =
                 coll->getIndexCatalog()->findIndexByName(opCtx, indexNames[i]);
-            invariant(desc);
+	    invariant(desc);
 
-            // Refresh the in-memory instance of the index with new version. This will also update
-            // the index formatVersion on-disk indirectly.
+            // Refresh the in-memory instance of the index with new version and notify the index
+	    // catalog that the definition of this index changed.
             desc = coll->getIndexCatalog()->refreshEntry(opCtx, desc);
 
             opCtx->recoveryUnit()->onRollback(
                 [opCtx, desc, coll]() { coll->getIndexCatalog()->refreshEntry(opCtx, desc); });
-        }
+	}
     }
 
     // Add collection UUID if it is missing. This returns an error if a collection already has a
