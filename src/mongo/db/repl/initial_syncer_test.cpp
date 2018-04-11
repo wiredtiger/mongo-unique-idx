@@ -442,8 +442,8 @@ protected:
 
     void runInitialSyncWithBadFCVResponse(std::vector<BSONObj> docs,
                                           ErrorCodes::Error expectedError);
-    void doSuccessfulInitialSyncWithOneBatch();
-    OplogEntry doInitialSyncWithOneBatch();
+    void doSuccessfulInitialSyncWithOneBatch(bool shouldSetFCV);
+    OplogEntry doInitialSyncWithOneBatch(bool shouldSetFCV);
 
     std::unique_ptr<TaskExecutorMock> _executorProxy;
 
@@ -3402,7 +3402,7 @@ TEST_F(InitialSyncerTest, InitialSyncerCancelsGetNextApplierBatchCallbackOnOplog
     ASSERT_EQUALS(ErrorCodes::OperationFailed, _lastApplied);
 }
 
-OplogEntry InitialSyncerTest::doInitialSyncWithOneBatch() {
+OplogEntry InitialSyncerTest::doInitialSyncWithOneBatch(bool shouldSetFCV) {
     auto initialSyncer = &getInitialSyncer();
     auto opCtx = makeOpCtx();
 
@@ -3449,7 +3449,10 @@ OplogEntry InitialSyncerTest::doInitialSyncWithOneBatch() {
         assertRemoteCommandNameEquals("getMore", request);
         net->blackHole(noi);
 
-        // Last rollback ID.
+        // Last rollback ID. Before the last rollback, set fCV to 4.0 if required by the test.
+        if (shouldSetFCV)
+            Test::setUp();
+
         request = net->scheduleSuccessfulResponse(makeRollbackCheckerResponse(baseRollbackId));
         assertRemoteCommandNameEquals("replSetGetRBID", request);
         net->runReadyNetworkOperations();
@@ -3465,8 +3468,8 @@ OplogEntry InitialSyncerTest::doInitialSyncWithOneBatch() {
     return lastOp;
 }
 
-void InitialSyncerTest::doSuccessfulInitialSyncWithOneBatch() {
-    auto lastOp = doInitialSyncWithOneBatch();
+void InitialSyncerTest::doSuccessfulInitialSyncWithOneBatch(bool shouldSetFCV) {
+    auto lastOp = doInitialSyncWithOneBatch(shouldSetFCV);
     ASSERT_EQUALS(lastOp.getOpTime(), unittest::assertGet(_lastApplied).opTime);
     ASSERT_EQUALS(lastOp.getHash(), unittest::assertGet(_lastApplied).value);
 
@@ -3475,11 +3478,14 @@ void InitialSyncerTest::doSuccessfulInitialSyncWithOneBatch() {
 
 TEST_F(InitialSyncerTest,
        InitialSyncerReturnsLastAppliedOnReachingStopTimestampAfterApplyingOneBatch) {
-    doSuccessfulInitialSyncWithOneBatch();
+    // Tell initial sync to setFCV=4.0 before the last rollback.
+    // _rollbackCheckerCheckForRollbackCallback() calls upgradeUniqueIndexVersionNonReplicated
+    // only when fCV is 4.0.
+    doSuccessfulInitialSyncWithOneBatch(true);
 
-    // Ensure that upgradeUniqueIndexVersionNonReplicated is not called.
+    // Ensure that upgradeUniqueIndexVersionNonReplicated is called.
     LockGuard lock(_storageInterfaceWorkDoneMutex);
-    ASSERT_FALSE(_storageInterfaceWorkDone.uniqueIndexUpdated);
+    ASSERT_TRUE(_storageInterfaceWorkDone.uniqueIndexUpdated);
 }
 
 TEST_F(InitialSyncerTest,
@@ -4010,6 +4016,14 @@ TEST_F(InitialSyncerTest, GetInitialSyncProgressReturnsCorrectProgress) {
     ASSERT_EQUALS(attempt1["durationMillis"].type(), NumberInt) << attempt1;
     ASSERT_EQUALS(attempt1.getStringField("syncSource"), std::string("localhost:27017"))
         << attempt1;
+}
+
+TEST_F(InitialSyncerTest, InitialSyncerDoesNotCallUpgradeUniqueIndexVersionNonReplicated) {
+    doSuccessfulInitialSyncWithOneBatch(false);
+
+    // Ensure that upgradeUniqueIndexVersionNonReplicated is not called.
+    LockGuard lock(_storageInterfaceWorkDoneMutex);
+    ASSERT_FALSE(_storageInterfaceWorkDone.uniqueIndexUpdated);
 }
 
 }  // namespace
