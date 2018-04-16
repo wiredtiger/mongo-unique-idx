@@ -1085,24 +1085,36 @@ void toBsonValue(uint8_t ctype,
                  TypeBits::Reader* typeBits,
                  bool inverted,
                  KeyString::Version version,
-                 BSONObjBuilderValueStream* stream);
+                 BSONObjBuilderValueStream* stream,
+                 bool toGetSize);
 
 void toBson(BufReader* reader,
             TypeBits::Reader* typeBits,
             bool inverted,
             KeyString::Version version,
-            BSONObjBuilder* builder) {
+            BSONObjBuilder* builder,
+            bool toGetSize) {
     while (readType<uint8_t>(reader, inverted) != 0) {
         if (inverted) {
             std::string name = readInvertedCString(reader);
             BSONObjBuilderValueStream& stream = *builder << name;
-            toBsonValue(
-                readType<uint8_t>(reader, inverted), reader, typeBits, inverted, version, &stream);
+            toBsonValue(readType<uint8_t>(reader, inverted),
+                        reader,
+                        typeBits,
+                        inverted,
+                        version,
+                        &stream,
+                        toGetSize);
         } else {
             StringData name = readCString(reader);
             BSONObjBuilderValueStream& stream = *builder << name;
-            toBsonValue(
-                readType<uint8_t>(reader, inverted), reader, typeBits, inverted, version, &stream);
+            toBsonValue(readType<uint8_t>(reader, inverted),
+                        reader,
+                        typeBits,
+                        inverted,
+                        version,
+                        &stream,
+                        toGetSize);
         }
     }
 }
@@ -1131,7 +1143,8 @@ void toBsonValue(uint8_t ctype,
                  TypeBits::Reader* typeBits,
                  bool inverted,
                  KeyString::Version version,
-                 BSONObjBuilderValueStream* stream) {
+                 BSONObjBuilderValueStream* stream,
+                 bool toGetSize) {
     // This is only used by the kNumeric.*ByteInt types, but needs to be declared up here
     // since it is used across a fallthrough.
     bool isNegative = false;
@@ -1182,7 +1195,9 @@ void toBsonValue(uint8_t ctype,
                 if (originalType == TypeBits::kString) {
                     *stream << readInvertedCStringWithNuls(reader);
                 } else {
-                    dassert(originalType == TypeBits::kSymbol);
+                    // We don't have a valid type when we are here to get key size.
+                    if (!toGetSize)
+                        dassert(originalType == TypeBits::kSymbol);
                     *stream << BSONSymbol(readInvertedCStringWithNuls(reader));
                 }
 
@@ -1191,7 +1206,9 @@ void toBsonValue(uint8_t ctype,
                 if (originalType == TypeBits::kString) {
                     *stream << readCStringWithNuls(reader, &scratch);
                 } else {
-                    dassert(originalType == TypeBits::kSymbol);
+                    // We don't have a valid type when we are here to get key size.
+                    if (!toGetSize)
+                        dassert(originalType == TypeBits::kSymbol);
                     *stream << BSONSymbol(readCStringWithNuls(reader, &scratch));
                 }
             }
@@ -1219,7 +1236,7 @@ void toBsonValue(uint8_t ctype,
             }
             // Not going to optimize CodeWScope.
             BSONObjBuilder scope;
-            toBson(reader, typeBits, inverted, version, &scope);
+            toBson(reader, typeBits, inverted, version, &scope, toGetSize);
             *stream << BSONCodeWScope(code, scope.done());
             break;
         }
@@ -1274,7 +1291,7 @@ void toBsonValue(uint8_t ctype,
 
         case CType::kObject: {
             BSONObjBuilder subObj(stream->subobjStart());
-            toBson(reader, typeBits, inverted, version, &subObj);
+            toBson(reader, typeBits, inverted, version, &subObj, toGetSize);
             break;
         }
 
@@ -1288,7 +1305,8 @@ void toBsonValue(uint8_t ctype,
                             typeBits,
                             inverted,
                             version,
-                            &(subArr << BSONObjBuilder::numStr(index++)));
+                            &(subArr << BSONObjBuilder::numStr(index++)),
+                            toGetSize);
             }
             break;
         }
@@ -1298,6 +1316,10 @@ void toBsonValue(uint8_t ctype,
         //
 
         case CType::kNumericNaN: {
+            // Nothing more to do if we are here to get key size.
+            if (toGetSize)
+                break;
+
             auto type = typeBits->readNumeric();
             if (type == TypeBits::kDouble) {
                 *stream << std::numeric_limits<double>::quiet_NaN();
@@ -1309,6 +1331,10 @@ void toBsonValue(uint8_t ctype,
         }
 
         case CType::kNumericZero: {
+            // Nothing more to do if we are here to get key size.
+            if (toGetSize)
+                break;
+
             uint8_t zeroType = typeBits->readZero();
             switch (zeroType) {
                 case TypeBits::kDouble:
@@ -1341,7 +1367,9 @@ void toBsonValue(uint8_t ctype,
         // fallthrough (format is the same as positive, but inverted)
         case CType::kNumericPositiveLargeMagnitude: {
             const uint8_t originalType = typeBits->readNumeric();
-            invariant(version > KeyString::Version::V0 || originalType != TypeBits::kDecimal);
+            // We don't have a valid type when we are here to get key size.
+            if (!toGetSize)
+                invariant(version > KeyString::Version::V0 || originalType != TypeBits::kDecimal);
             uint64_t encoded = readType<uint64_t>(reader, inverted);
             encoded = endian::bigToNative(encoded);
             bool hasDecimalContinuation = false;
@@ -1349,6 +1377,10 @@ void toBsonValue(uint8_t ctype,
 
             // Backward compatibility
             if (version == KeyString::Version::V0) {
+                // Nothing more to do if we are here to get key size.
+                if (toGetSize)
+                    break;
+
                 memcpy(&bin, &encoded, sizeof(bin));
             } else if (!(encoded & (1ULL << 63))) {  // In range of (finite) doubles
                 hasDecimalContinuation = encoded & 1;
@@ -1358,36 +1390,55 @@ void toBsonValue(uint8_t ctype,
                 if (isNegative)
                     bin = -bin;
             } else if (encoded == ~0ULL) {  // infinity
+                // Nothing more to do if we are here to get key size.
+                if (toGetSize)
+                    break;
+
                 bin = isNegative ? -std::numeric_limits<double>::infinity()
                                  : std::numeric_limits<double>::infinity();
             } else {  // Huge decimal number, directly output
-                invariant(originalType == TypeBits::kDecimal);
+                // We don't have a valid type when we are here to get key size.
+                if (!toGetSize)
+                    invariant(originalType == TypeBits::kDecimal);
                 uint64_t highbits = encoded & ~(1ULL << 63);
                 uint64_t lowbits = endian::bigToNative(readType<uint64_t>(reader, inverted));
-                Decimal128 dec(Decimal128::Value{lowbits, highbits});
-                if (isNegative)
-                    dec = dec.negate();
-                if (dec.isFinite())
-                    dec = adjustDecimalExponent(typeBits, dec);
-                *stream << dec;
+                if (!toGetSize) {
+                    // This processing is not required when we are here to get key size.
+                    Decimal128 dec(Decimal128::Value{lowbits, highbits});
+                    if (isNegative)
+                        dec = dec.negate();
+                    if (dec.isFinite())
+                        dec = adjustDecimalExponent(typeBits, dec);
+                    *stream << dec;
+                }
                 break;
             }
 
+            // When we are here to get key size, read the decimal continuation if there is one.
+            // Otherwise nothing more to do.
+            if (hasDecimalContinuation && toGetSize) {
+                reader->skip(sizeof(std::uint64_t));
+                break;
+            }
+
+            // We don't have a valid type when we are here to get key size.
             // 'bin' contains the value of the input, rounded toward zero in case of decimal
-            if (originalType == TypeBits::kDouble) {
+            if (!toGetSize && originalType == TypeBits::kDouble) {
                 *stream << bin;
-            } else if (originalType == TypeBits::kLong) {
+            } else if (!toGetSize && originalType == TypeBits::kLong) {
                 // This can only happen for a single number.
                 invariant(bin == static_cast<double>(std::numeric_limits<long long>::min()));
                 *stream << std::numeric_limits<long long>::min();
             } else {
-                invariant(originalType == TypeBits::kDecimal && version != KeyString::Version::V0);
+                if (!toGetSize)
+                    invariant(originalType == TypeBits::kDecimal &&
+                              version != KeyString::Version::V0);
                 const auto roundAwayFromZero = isNegative ? Decimal128::kRoundTowardNegative
                                                           : Decimal128::kRoundTowardPositive;
                 Decimal128 dec(bin, Decimal128::kRoundTo34Digits, roundAwayFromZero);
                 if (hasDecimalContinuation)
                     dec = readDecimalContinuation(reader, inverted, dec);
-                if (dec.isFinite())
+                if (dec.isFinite() && !toGetSize)
                     dec = adjustDecimalExponent(typeBits, dec);
                 *stream << dec;
             }
@@ -1405,6 +1456,10 @@ void toBsonValue(uint8_t ctype,
             encoded = endian::bigToNative(encoded);
 
             if (version == KeyString::Version::V0) {
+                // Nothing more to do if we are here to get key size.
+                if (toGetSize)
+                    break;
+
                 // for these, the raw double was stored intact, including sign bit.
                 invariant(originalType == TypeBits::kDouble);
                 double d;
@@ -1417,6 +1472,10 @@ void toBsonValue(uint8_t ctype,
                 case 0x0: {
                     // Teeny tiny decimal, smaller magnitude than 2**(-1074)
                     uint64_t lowbits = readType<uint64_t>(reader, inverted);
+                    // Nothing more to do if we are here to get key size.
+                    if (toGetSize)
+                        break;
+
                     lowbits = endian::bigToNative(lowbits);
                     Decimal128 dec = Decimal128(Decimal128::Value{lowbits, encoded});
                     dec = adjustDecimalExponent(typeBits, dec);
@@ -1437,13 +1496,21 @@ void toBsonValue(uint8_t ctype,
                     encoded >>= 1;
                     double scaledBin;
                     memcpy(&scaledBin, &encoded, sizeof(scaledBin));
-                    if (originalType == TypeBits::kDouble) {
+                    // We don't have a valid type when we are here to get key size.
+                    if (!toGetSize && originalType == TypeBits::kDouble) {
                         invariant(!hasDecimalContinuation);
                         double bin = scaledBin * kTinyDoubleExponentDownshiftFactor;
                         *stream << (isNegative ? -bin : bin);
                         break;
                     }
-                    invariant(originalType == TypeBits::kDecimal && hasDecimalContinuation);
+
+                    if (!toGetSize)
+                        invariant(originalType == TypeBits::kDecimal && hasDecimalContinuation);
+
+                    // If we are here to get key size and do not have a decimal continuation then
+                    // there is nothing more to do.
+                    if (!hasDecimalContinuation)
+                        break;
 
                     // If the actual double would be subnormal, scale in decimal domain.
                     Decimal128 dec;
@@ -1464,7 +1531,8 @@ void toBsonValue(uint8_t ctype,
                     }
 
                     dec = readDecimalContinuation(reader, inverted, dec);
-                    *stream << adjustDecimalExponent(typeBits, isNegative ? dec.negate() : dec);
+                    if (!toGetSize)
+                        *stream << adjustDecimalExponent(typeBits, isNegative ? dec.negate() : dec);
                     break;
                 }
                 case 0x3: {
@@ -1473,14 +1541,18 @@ void toBsonValue(uint8_t ctype,
                     encoded >>= 2;
                     double bin;
                     memcpy(&bin, &encoded, sizeof(bin));
-                    if (originalType == TypeBits::kDouble) {
+                    // When we are here to get size, originalType could falsely be kDouble that
+                    // may incorrectly terminate the key reading logic here.
+                    if (!toGetSize && originalType == TypeBits::kDouble) {
                         invariant(dcm == KeyString::kDCMEqualToDouble);
                         *stream << (isNegative ? -bin : bin);
                         break;
                     }
 
-                    // Deal with decimal cases
-                    invariant(originalType == TypeBits::kDecimal);
+                    // Deal with decimal cases. We don't have a valid type when we are here to get
+                    // key size.
+                    if (!toGetSize)
+                        invariant(originalType == TypeBits::kDecimal);
                     Decimal128 dec;
                     switch (dcm) {
                         case KeyString::kDCMEqualToDoubleRoundedUpTo15Digits:
@@ -1489,9 +1561,14 @@ void toBsonValue(uint8_t ctype,
                                              Decimal128::kRoundTowardPositive);
                             break;
                         case KeyString::kDCMEqualToDouble:
-                            dec = Decimal128(bin,
-                                             Decimal128::kRoundTo34Digits,
-                                             Decimal128::kRoundTowardPositive);
+                            // Avoid creating a decimal here as we could land here during size
+                            // calculation. We do not have a valid type at that time. It actually
+                            // may
+                            // not be a Decimal128 double.
+                            if (!toGetSize)
+                                dec = Decimal128(bin,
+                                                 Decimal128::kRoundTo34Digits,
+                                                 Decimal128::kRoundTowardPositive);
                             break;
                         case KeyString::kDCMHasContinuationLessThanDoubleRoundedUpTo15Digits:
                         case KeyString::kDCMHasContinuationLargerThanDoubleRoundedUpTo15Digits:
@@ -1501,7 +1578,8 @@ void toBsonValue(uint8_t ctype,
                                              Decimal128::kRoundTowardPositive);
                             dec = readDecimalContinuation(reader, inverted, dec);
                     }
-                    *stream << adjustDecimalExponent(typeBits, isNegative ? dec.negate() : dec);
+                    if (!toGetSize)
+                        *stream << adjustDecimalExponent(typeBits, isNegative ? dec.negate() : dec);
                     break;
                 }
                 default:
@@ -1545,6 +1623,10 @@ void toBsonValue(uint8_t ctype,
             int64_t integerPart = encodedIntegerPart >> 1;
 
             if (!haveFractionalPart) {
+                // Nothing more to do if we are here to get key size.
+                if (toGetSize)
+                    break;
+
                 if (isNegative)
                     integerPart = -integerPart;
 
@@ -1569,7 +1651,9 @@ void toBsonValue(uint8_t ctype,
 
             // KeyString V0: anything fractional is a double
             if (version == KeyString::Version::V0) {
-                invariant(originalType == TypeBits::kDouble);
+                // We don't have a valid type when we are here to get key size.
+                if (!toGetSize)
+                    invariant(originalType == TypeBits::kDouble);
                 const uint64_t exponent = (64 - countLeadingZeros64(integerPart)) - 1;
                 const size_t fractionalBits = (52 - exponent);
                 const size_t fractionalBytes = (fractionalBits + 7) / 8;
@@ -1603,7 +1687,7 @@ void toBsonValue(uint8_t ctype,
 
             // Zero out the DCM and convert the whole binary fraction
             double bin = static_cast<double>(encodedFraction & ~3ULL) * kInvPow256[fracBytes];
-            if (originalType == TypeBits::kDouble) {
+            if (!toGetSize && originalType == TypeBits::kDouble) {
                 *stream << (isNegative ? -bin : bin);
                 break;
             }
@@ -1613,8 +1697,9 @@ void toBsonValue(uint8_t ctype,
                 ? static_cast<KeyString::DecimalContinuationMarker>(encodedFraction & 3)
                 : KeyString::kDCMHasContinuationLargerThanDoubleRoundedUpTo15Digits;
 
-            // Deal with decimal cases
-            invariant(originalType == TypeBits::kDecimal);
+            // Deal with decimal cases. We don't have a valid type when we are here to get key size.
+            if (!toGetSize)
+                invariant(originalType == TypeBits::kDecimal);
             Decimal128 dec;
             switch (dcm) {
                 case KeyString::kDCMEqualToDoubleRoundedUpTo15Digits:
@@ -1633,7 +1718,8 @@ void toBsonValue(uint8_t ctype,
                               bin, Decimal128::kRoundTo34Digits, Decimal128::kRoundTowardPositive);
                     dec = readDecimalContinuation(reader, inverted, dec);
             }
-            *stream << adjustDecimalExponent(typeBits, isNegative ? dec.negate() : dec);
+            if (!toGetSize)
+                *stream << adjustDecimalExponent(typeBits, isNegative ? dec.negate() : dec);
             break;
         }
         default:
@@ -1978,7 +2064,9 @@ size_t KeyString::getKeySize(const char* buffer,
                              Ordering ord,
                              const TypeBits& typeBits) {
     invariant(len > 0);
+    BSONObjBuilder builder;
     BufReader reader(buffer, len);
+    TypeBits::Reader typeBitsReader(typeBits);
     unsigned remainingBytes;
     for (int i = 0; (remainingBytes = reader.remaining()); i++) {
         const bool invert = (ord.get(i) == -1);
@@ -1988,7 +2076,8 @@ size_t KeyString::getKeySize(const char* buffer,
             break;
 
         // Read the Key that comes after the first byte in KeyString.
-        filterKeyFromKeyString(ctype, &reader, invert, typeBits.version);
+        toBsonValue(
+            ctype, &reader, &typeBitsReader, invert, typeBits.version, &(builder << ""), true);
     }
 
     invariant(len > remainingBytes);
@@ -2013,7 +2102,8 @@ BSONObj KeyString::toBson(const char* buffer, size_t len, Ordering ord, const Ty
 
         if (ctype == kEnd)
             break;
-        toBsonValue(ctype, &reader, &typeBitsReader, invert, typeBits.version, &(builder << ""));
+        toBsonValue(
+            ctype, &reader, &typeBitsReader, invert, typeBits.version, &(builder << ""), false);
     }
     return builder.obj();
 }
