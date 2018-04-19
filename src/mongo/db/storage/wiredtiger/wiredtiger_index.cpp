@@ -923,13 +923,18 @@ public:
     }
 
 protected:
-    // Called after _key has been filled in. Must not throw WriteConflictException.
+    // Called after _key has been filled in, ie a new key to be processed has been fetched.
+    // Must not throw WriteConflictException, throwing a WriteConflictException will retry the
+    // operation effectively skipping over this key.
     virtual void updateIdAndTypeBits() {
         _id = KeyString::decodeRecordIdAtEnd(_key.getBuffer(), _key.getSize());
 
         WT_CURSOR* c = _cursor->get();
         WT_ITEM item;
-        invariantWTOK(c->get_value(c, &item));
+        // Can't get WT_ROLLBACK and hence won't throw an exception.
+        auto ret = c->get_value(c, &item);
+        invariant(ret != WT_ROLLBACK);
+        invariantWTOK(ret);
         BufReader br(item.data, item.size);
         _typeBits.resetFromBuffer(&br);
     }
@@ -1143,6 +1148,9 @@ public:
                                 KVPrefix prefix)
         : WiredTigerIndexCursorBase(idx, opCtx, forward, prefix) {}
 
+    // Called after _key has been filled in, ie a new key to be processed has been fetched.
+    // Must not throw WriteConflictException, throwing a WriteConflictException will retry the
+    // operation effectively skipping over this key.
     void updateIdAndTypeBits() override {
         TRACE_INDEX << "Unique Index KeyString: [" << _key.toString() << "]";
 
@@ -1186,13 +1194,19 @@ public:
     }
 
 private:
+    // Called after _key has been filled in, ie a new key to be processed has been fetched.
+    // Must not throw WriteConflictException, throwing a WriteConflictException will retry the
+    // operation effectively skipping over this key.
     void _updateIdAndTypeBitsFromValue() {
         // We assume that cursors can only ever see unique indexes in their "pristine" state,
         // where no duplicates are possible. The cases where dups are allowed should hold
         // sufficient locks to ensure that no cursor ever sees them.
         WT_CURSOR* c = _cursor->get();
         WT_ITEM item;
-        invariantWTOK(c->get_value(c, &item));
+        // Can't get WT_ROLLBACK and hence won't throw an exception.
+        auto ret = c->get_value(c, &item);
+        invariant(ret != WT_ROLLBACK);
+        invariantWTOK(ret);
 
         BufReader br(item.data, item.size);
         _id = KeyString::decodeRecordId(&br);
